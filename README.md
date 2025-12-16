@@ -22,7 +22,7 @@ Before running experiments, if you plan to run large-scale testing you will like
 - From [LIBSVM](https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/):
   - YearPredictionMSD (testing)
   - gisette
-- From [LPFeas](https://plato.asu.edu/ftp/lptestset/)
+- From [LPFeas](https://plato.asu.edu/ftp/lptestset/):
   - brazil3
   - chromaticindex1024-7
   - ex10
