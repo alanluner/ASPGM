@@ -1,0 +1,56 @@
+include("fom_interface.jl")
+include("../Experiments/example_oracles.jl")
+
+
+using Optim, LineSearches
+
+mutable struct LBFGS <: FOM
+    mem_size
+    linesearchMode
+
+    LBFGS(mem_size) = new(mem_size, LineSearches.BackTracking())
+
+    function LBFGS(mem_size, LSMode)
+        if LSMode == :StrongWolfe
+            return new(mem_size, LineSearches.StrongWolfe())
+        elseif LSMode == :HagerZhang
+            return new(mem_size, LineSearches.HagerZhang())
+        else
+            return new(mem_size, LineSearches.BackTracking())
+        end
+    end
+
+end
+
+
+function runMethod(method::LBFGS, oracle, x0::Vector{Float64}; oracleCalls = 500, runTime = 0, saveDetails = false)
+
+    if typeof(oracle) != SmartOracle
+        @warn "oracle is not a SmartOracle. SmartOracle is recommended for LBFGS in order to obtain accurate oracle counts."
+    end
+
+    if oracleCalls > 0
+        if runTime > 0
+            # For BFGS, we can't use both runTime and oracleCalls, so we will just use the runTime limit
+            res = Optim.optimize((x -> fOracle(oracle, x)), (x -> gOracle(oracle, x)), x0, Optim.LBFGS(;m=method.mem_size, linesearch = method.linesearchMode), Optim.Options(time_limit = runTime, g_abstol=1e-16); inplace=false)
+        else
+            # Otherwise, use oracleCalls limit (via g_calls_limit)
+            res = Optim.optimize((x -> fOracle(oracle, x)), (x -> gOracle(oracle, x)), x0, Optim.LBFGS(;m=method.mem_size, linesearch = method.linesearchMode), Optim.Options(g_calls_limit = oracleCalls, g_abstol=1e-16); inplace=false)
+        end
+    else
+        # Otherwise, use runTime (via time_limit)
+        res = Optim.optimize((x -> fOracle(oracle, x)), (x -> gOracle(oracle, x)), x0, Optim.LBFGS(;m=method.mem_size, linesearch = method.linesearchMode), Optim.Options(time_limit = runTime, g_abstol=1e-16); inplace=false)
+    end
+
+    return Optim.minimizer(res), Optim.minimum(res), []
+end
+
+function methodTitle(method::LBFGS)
+    if typeof(method.linesearchMode).name.name == :BackTracking
+        str = "BT"
+    else
+        str = "HZ"
+    end
+    return "LBFGS-"*str
+end
+
