@@ -120,7 +120,7 @@ end
 totalProblems = size(functionValData,2)
 targetRelAccuracies = [1e-4, 1e-7, 1e-10]
 
-numberSolved, times = getSummaryData(functionValData, timeData, fStarData, targetRelAccuracies, maxIter)
+numberSolved, times = getSummaryData(functionValData, timeData, fStarData, targetRelAccuracies, oracleCalls)
 
 p = plotOracleAndTime(numberSolved, times, targetRelAccuracies, methods; file=[], colors=[])
 

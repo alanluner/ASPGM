@@ -210,7 +210,7 @@ function initialize(method::ASPGM, oracle, x0::Vector{Float64})
     # Instantiate a single Mosek instance for solving our subproblem at each step
     # Clearing it out and reusing at each step is faster than building a new one every iteration.
     method.model = Model(Mosek.Optimizer)
-    set_optimizer_attribute(method.model, "MSK_DPAR_SEMIDEFINITE_TOL_APPROX", 1e-12) # ASL revisit
+    set_optimizer_attribute(method.model, "MSK_DPAR_SEMIDEFINITE_TOL_APPROX", 1e-12)
 
     method.flags = flags()
 
@@ -454,7 +454,7 @@ function optimize_rho_gamma(method, v_m)
     idx_s = findlast(method.taus .!= 0)
 
     # Safeguard to prevent huge jumps in rho and gamma - we enforce rho,gamma < 1/tol
-    tol = min(1e-8, 1e-3/method.taus[idx_s]) # This allows new tau to be very large if the previous one was very large, but prevents huge jumps #ASL REVISIT
+    tol = min(1e-8, 1e-3/method.taus[idx_s]) # This allows new tau to be very large if the previous one was very large, but prevents huge jumps
 
     # Calculate δ = L_n τ_s(1/L_s^2 - 1/L_n^2)*1/2||g_s||^2
     delta = method.L*method.taus[idx_s]*(1/method.LPrev[idx_s]^2 - 1/method.L^2)*1/2*method.MAT[l+idx_s, l+idx_s]     #Note: MAT[l+idx_s,l+idx_s] = ||g_s||^2

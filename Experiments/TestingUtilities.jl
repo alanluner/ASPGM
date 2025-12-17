@@ -257,8 +257,8 @@ function problemList_LP()
              :brazil3,:chromatic,:ex10,:graph40,:qap15,:rmine15,:savsched1,:scpm1,:setcover,:supportcase10]
     types = [:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,
              :SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu]
-    sources = [:LP, :LP, :LP, :LP, :LP,
-               :LP, :LP, :LP, :LP, :LP]
+    sources = [:LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas,
+               :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas]
 
     return probs, types, sources
 end

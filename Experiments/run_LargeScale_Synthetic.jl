@@ -30,7 +30,7 @@ randSeedNum = 23
 randSeed = Xoshiro(randSeedNum)
 
 # Determine computation budget for each problem instance in terms of oracle calls or run time (seconds). If both are nonzero, then method will run until BOTH conditions are satisfied
-maxIter = 250
+oracleCalls = 250
 runTime = 0.1
 
 # Number of copies of each oracle setup to use - this produces numCopies*4 oracles per dimension and problemType
@@ -110,10 +110,12 @@ for (dIdx,d) in enumerate(dimArray)
         global idxCtr
         idxCtr += M
 
-        if findTrueSolutions
-            jldsave(ResultsSaveFile; functionValData, timeData, xStarData, fStarData, methodsInit, dimArray, oracleCalls, runTime, problemTypes, randSeed, randSeedNum)
-        else
-            jldsave(ResultsSaveFile; functionValData, timeData, xStarData, fStarData, methodsInit, dimArray, oracleCalls, runTime, problemTypes, randSeed, randSeedNum)
+        if !isempty(ResultsSaveFile)
+            if findTrueSolutions
+                jldsave(ResultsSaveFile; functionValData, timeData, xStarData, fStarData, methodsInit, dimArray, oracleCalls, runTime, problemTypes, randSeed, randSeedNum)
+            else
+                jldsave(ResultsSaveFile; functionValData, timeData, xStarData, fStarData, methodsInit, dimArray, oracleCalls, runTime, problemTypes, randSeed, randSeedNum)
+            end
         end
 
     end
@@ -122,6 +124,6 @@ end
 totalProblems = size(functionValData,2)
 targetRelAccuracies = [1e-4, 1e-7, 1e-10]
 
-numberSolved, times = getSummaryData(functionValData, timeData, fStarData, targetRelAccuracies, maxIter)
+numberSolved, times = getSummaryData(functionValData, timeData, fStarData, targetRelAccuracies, oracleCalls)
 
 p = plotOracleAndTime(numberSolved, times, targetRelAccuracies, methods; file=[], colors=[])
