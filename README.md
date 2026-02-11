@@ -2,8 +2,7 @@
 Adaptive Subgame Perfect Gradient Method
 
 This code contains an implementation of the Adaptive Subgame Perfect Gradient Method introduced in 
-> [Alan Luner and Benjamin Grimmer. "A Practical Adaptive Subgame Perfect Gradient Method", arXiv:2510.21617, 2025.](https://arxiv.org/abs/2510.21617). It also contains code for reproducing the various experiments in our paper. 
-
+> [Alan Luner and Benjamin Grimmer. "A Practical Adaptive Subgame Perfect Gradient Method", arXiv:2510.21617, 2025.](https://arxiv.org/abs/2510.21617).
 The paper can be accessed on arXiv [here](https://arxiv.org/abs/2510.21617)
 
 
