@@ -1,20 +1,21 @@
 include("example_oracles.jl")
 include("TestingUtilities.jl")
 include("../ASPGM.jl")
+include("../ASPGM11.jl")
 include("../AlternateMethods/ACFGM.jl")
 include("../AlternateMethods/AdaNAG.jl")
 include("../AlternateMethods/AdGD.jl")
 include("../AlternateMethods/LBFGS.jl")
 include("../AlternateMethods/NAGF.jl")
 include("../AlternateMethods/OBL.jl")
-include("../AlternateMethods/OSGMR.jl")
+include("../AlternateMethods/OSGMB.jl")
 include("../AlternateMethods/UFGM.jl")
 include("plot_Performance.jl")
 
 
-using Random
+using Logging, LineSearches, Random, LinearAlgebra
 
-
+BLAS.set_num_threads(1)
 
 # ---------- Settings ----------
 
@@ -22,16 +23,16 @@ using Random
 problemTypes = defaultProblemTypes()        # :LogSumExp,:LSReg,:LogReg,:SquaredRelu,:QuarticReg,:CubicReg
 
 # Problem dimensions: x ∈ ℝ^d, A ∈ ℝ^{4d x d}
-dimArray = [1000, 2000, 4000]
+dimArray = [1000, 2000, 4000, 8000]
 
 
 # Random seed for reproducibility
-randSeedNum = 23
+randSeedNum = 41
 randSeed = Xoshiro(randSeedNum)
 
 # Determine computation budget for each problem instance in terms of oracle calls or run time (seconds). If both are nonzero, then method will run until BOTH conditions are satisfied
-oracleCalls = 250
-runTime = 0.1
+oracleCalls = 500
+runTime = 60
 
 # Number of copies of each oracle setup to use - this produces numCopies*4 oracles per dimension and problemType
 numCopies = 2   
@@ -40,15 +41,15 @@ numCopies = 2
 findTrueSolutions = true                  
 
 # If nonempty, save results to file
-ResultsSaveFile = []
+ResultsSaveFile = "Results_Synthetic.jld2"
 
 # List of first-order methods to test
-methods = [ASPGM(5,5), ASPGM(1,1), BSPGM(7), LBFGS(10,:BackTracking), LBFGS(10,:HagerZhang), UFGM(), OBL(), AdaNAG(), ACFGM(), AdGD(), NAGF(), OSGMR(0.1)]
+methods = [ASPGM(5,5), ASPGM11(), BSPGM(7), LBFGS(10,:BackTracking), LBFGS(10,:HagerZhang), UFGM(), OBL(), AdaNAG(), ACFGM(), AdGD(), NAGF(), OSGMB()]
 
 # ---------- End Settings ----------
 
 
-methodsInit = copy(methods) # Create copy for saving to results file. This is necessary because .jld2 cannot handle the ASPGM object once Mosek is initialized.
+methodsInit = methodTitle.(methods) # Store list of methods for saving to results file
 
 numDims = size(dimArray,1)
 numProblemTypes = length(problemTypes)
@@ -63,6 +64,19 @@ timeData = Array{Vector{Float64}}(undef, length(methods), totalProblems)
 xStarData = Array{Vector{Float64}}(undef, totalProblems)
 fStarData = Vector{Float64}(undef, totalProblems)
 
+# --- Warm-up problem to compile each method ---
+print("\nWarming up methods...")
+A_tmp = rand(10, 5)
+b_tmp = rand(10)
+q_tmp = SmartOracle(LSRegOracle(A_tmp, b_tmp))
+x0_tmp = zeros(5)
+
+for met in methods
+    # Run briefly just to trigger compilation
+    runMethod(met, q_tmp, x0_tmp; oracleCalls = 5, runTime = 0)
+end
+print("\nWarm-up complete.\n")
+# --- End warm-up ---
 
 global idxCtr = 0
 for (dIdx,d) in enumerate(dimArray)
@@ -98,10 +112,14 @@ for (dIdx,d) in enumerate(dimArray)
                 # Convert to smart oracle
                 q2 = SmartOracle(q)
 
-                x0 = x0List[j]
+                x0 = x0List[j] 
 
+                GC.gc() # garbage collection to reset
+
+                # Run method
                 vals, _ = runMethod(met, q2, x0; oracleCalls = oracleCalls, runTime = runTime)
 
+                # Save function value data and time data
                 functionValData[i,indices[j]] = q2.vals
                 timeData[i,indices[j]] = q2.times .- q2.times[1]
             end
@@ -110,6 +128,7 @@ for (dIdx,d) in enumerate(dimArray)
         global idxCtr
         idxCtr += M
 
+        # Save off results
         if !isempty(ResultsSaveFile)
             if findTrueSolutions
                 jldsave(ResultsSaveFile; functionValData, timeData, xStarData, fStarData, methodsInit, dimArray, oracleCalls, runTime, problemTypes, randSeed, randSeedNum)
@@ -124,6 +143,8 @@ end
 totalProblems = size(functionValData,2)
 targetRelAccuracies = [1e-4, 1e-7, 1e-10]
 
+# Process data for plotting
 numberSolved, times = getSummaryData(functionValData, timeData, fStarData, targetRelAccuracies, oracleCalls)
 
-p = plotOracleAndTime(numberSolved, times, targetRelAccuracies, methods; file=[], colors=[])
+# Plot results
+p = plotOracleAndTime(numberSolved, times, targetRelAccuracies, methods; file=[], endTime = 60)

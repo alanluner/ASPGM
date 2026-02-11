@@ -1,4 +1,4 @@
-using BlockDiagonals, SparseArrays
+using BlockDiagonals, SparseArrays, LinearAlgebra
 
 # Abstract superclass for first order oracles
 # Should implement
@@ -13,11 +13,11 @@ struct quadratic <: Oracle
     c::Float64
 end
 
-function (q::quadratic)(x::Vector{Float64})
-    y = q.A*x
-    f = 1/2*x'*y + q.b'*x + q.c
-    g = y + q.b
-    return f, g
+function (q::quadratic)(dest_g::Vector{Float64}, x::Vector{Float64})
+    mul!(dest_g, q.A, x)
+    f = 1/2*dot(x, dest_g) + dot(q.b, x) + q.c
+    @. dest_g = dest_g + q.b
+    return f
 end
 
 # Least Squares Regression
@@ -25,14 +25,18 @@ end
 struct LSRegOracle <: Oracle
     A::Union{Matrix{Float64}, SparseMatrixCSC{Float64,Int64}}
     b::Vector{Float64}
+    tmp::Vector{Float64}
 end
 
-function (q::LSRegOracle)(x::Vector{Float64})
-    y = q.A*x-q.b
-    f = 1/2*norm(y)^2
-    g = q.A'*(y)
+LSRegOracle(A,b) = LSRegOracle(A,b,zeros(size(b)))
 
-    return f,g
+function (q::LSRegOracle)(dest_g::Vector{Float64}, x::Vector{Float64})
+    mul!(q.tmp, q.A, x)
+    @. q.tmp = q.tmp - q.b
+    f = 1/2*dot(q.tmp, q.tmp)
+    mul!(dest_g, transpose(q.A), q.tmp)
+
+    return f
 end
 
 
@@ -42,20 +46,27 @@ struct LogRegOracle <: Oracle
     A::Union{Matrix{Float64}, SparseMatrixCSC{Float64,Int64}}
     c::Vector{Float64}
     eta::Float64
+    tmp::Vector{Float64}
 end
 
-function (q::LogRegOracle)(x::Vector{Float64})
-    y = q.A*x
-    retg = zeros(length(y))
-    f = 0
-    for i in 1:length(q.c)
-        f += max(0,q.c[i]*y[i]) + log(exp(-1*max(0,q.c[i]*y[i]))+exp(q.c[i]*y[i] - max(0,q.c[i]*y[i])))
-        retg[i] = q.c[i] / (1 + exp(-1*q.c[i] * y[i]))
-    end
-    f = f + q.eta/2*norm(x)^2
-    g = q.A'*retg + q.eta*x
+LogRegOracle(A,c,eta) = LogRegOracle(A,c,eta,zeros(size(c)))
 
-    return f,g
+function (q::LogRegOracle)(dest_g::Vector{Float64}, x::Vector{Float64})
+    mul!(q.tmp, q.A, x)
+    f = 0
+    @inbounds for i in eachindex(q.c)
+        t = q.c[i] * q.tmp[i]
+        r = max(0, t)
+        f += r + log( exp(-r) + exp(t - r))
+        q.tmp[i] = q.c[i] / (1 + exp(-t))
+    end
+
+    f = f + 0.5*q.eta*dot(x,x)
+
+    mul!(dest_g, transpose(q.A), q.tmp)
+    @. dest_g = dest_g + q.eta*x
+
+    return f
 end
 
 # Log-Sum-Exp
@@ -63,16 +74,29 @@ end
 struct LogSumExpOracle <: Oracle
     A::Union{Matrix{Float64}, SparseMatrixCSC{Float64,Int64}}
     b::Vector{Float64}
+    tmp::Vector{Float64}
 end
 
-function (q::LogSumExpOracle)(x::Vector{Float64})
-    y = q.A*x - q.b
-    max_y = maximum(y)
-    f = max_y + log(sum(exp.(y .- max_y)))
-    exp_shifted = exp.( y .- max_y)
-    g = q.A'*exp_shifted/sum(exp_shifted)
+LogSumExpOracle(A,b) = LogSumExpOracle(A,b,zeros(size(b)))
 
-    return f,g
+function (q::LogSumExpOracle)(dest_g::Vector{Float64}, x::Vector{Float64})
+    mul!(q.tmp, q.A, x)
+    @. q.tmp = q.tmp - q.b
+    max_y = maximum(q.tmp)
+
+    s = 0.0
+    @inbounds for i in eachindex(q.tmp)
+        v = exp(q.tmp[i] - max_y)
+        q.tmp[i] = v
+        s += v
+    end
+
+    f = max_y + log(s)
+
+    mul!(dest_g, transpose(q.A), q.tmp)
+    @. dest_g = dest_g/s
+
+    return f
 end
 
 # Squared Relu Regression
@@ -80,13 +104,22 @@ end
 struct SquaredReluOracle <: Oracle
     A::Union{Matrix{Float64}, SparseMatrixCSC{Float64,Int64}}
     b::Vector{Float64}
+    tmp::Vector{Float64}
 end
 
-function (q::SquaredReluOracle)(x::Vector{Float64})
-    y = q.A*x - q.b
-    f = 1/2*sum((max.(y, zeros(length(q.b)))).^2)
-    g = q.A'*max.(y, zeros(length(q.b)))
-    return f, g
+SquaredReluOracle(A,b) = SquaredReluOracle(A,b,zeros(size(b)))
+
+function (q::SquaredReluOracle)(dest_g::Vector{Float64}, x::Vector{Float64})
+    mul!(q.tmp, q.A, x)
+    @. q.tmp = q.tmp - q.b
+
+    q.tmp .= max.(q.tmp, 0)
+
+    f = 1/2*dot(q.tmp, q.tmp)
+
+    mul!(dest_g, transpose(q.A), q.tmp)
+
+    return f
 end
 
 # Cubic Regression
@@ -95,14 +128,22 @@ struct CubicRegOracle <: Oracle
     A::Union{Matrix{Float64}, SparseMatrixCSC{Float64,Int64}}
     b::Vector{Float64}
     eta::Float64
+    tmp::Vector{Float64}
 end
 
-function (q::CubicRegOracle)(x::Vector{Float64})
-    y = q.A*x
-    f = q.b'*x + 1/2*norm(y)^2 + (q.eta/6)*norm(x)^3
-    g = q.b + q.A'*y + (q.eta/2)*norm(x)*x
+CubicRegOracle(A,b,eta) = CubicRegOracle(A,b,eta,zeros(size(A,1)))
 
-    return f,g
+function (q::CubicRegOracle)(dest_g::Vector{Float64}, x::Vector{Float64})
+    mul!(q.tmp, q.A, x)
+    yNormSq = dot(q.tmp, q.tmp)
+    xNorm = norm(x)
+
+    f = dot(q.b, x) + 1/2*yNormSq + (q.eta/6)*xNorm^3
+
+    mul!(dest_g, transpose(q.A), q.tmp)
+    @. dest_g = dest_g + q.b + (q.eta/2)*xNorm*x
+
+    return f
 end
 
 # Quartic Regression
@@ -110,13 +151,22 @@ end
 struct QuarticRegOracle <: Oracle
     A::Union{Matrix{Float64}, SparseMatrixCSC{Float64,Int64}}
     b::Vector{Float64}
+    tmp::Vector{Float64}
 end
 
-function (q::QuarticRegOracle)(x::Vector{Float64})
-    y = q.A*x - q.b
-    f = norm(y, 4)^4
-    g = 4*q.A'*(y.^3)
-    return f,g
+QuarticRegOracle(A, b) = QuarticRegOracle(A, b, zeros(size(b)))
+
+function (q::QuarticRegOracle)(dest_g::Vector{Float64}, x::Vector{Float64})
+    mul!(q.tmp, q.A, x)
+    @. q.tmp = q.tmp - q.b
+
+    f = 1/4*norm(q.tmp, 4)^4
+
+    @. q.tmp = q.tmp.^3
+
+    mul!(dest_g, transpose(q.A), q.tmp)
+
+    return f
 end
 
 
@@ -126,32 +176,34 @@ end
 # In our framework where f(x) and ∇f(x) are calculated simultaneously, this should only result in one oracle call. The special handling of SmartOracle ensures that is the case.
 
 mutable struct SmartOracle <: Oracle
-    q::Oracle
-    f
-    g
-    x
-    vals       # Saves off the value each time the specific type of oracle is called
-    times
-    oracleCalls
+    orac::Oracle                # Oracle
+    x::Vector{Float64}          # Stores iterate from previous oracle call
+    f::Float64                  # Stores value from previous oracle call
+    g::Vector{Float64}          # Stores gradient from previous oracle call
+    vals::Vector{Float64}       # Saves off the value at each oracle call
+    times::Vector{Float64}      # Saves off the time at each oracle call
+    oracleCalls::Int64          # Total oracle calls
 end
 
-SmartOracle(q) = SmartOracle(q, [], [], [], [], [], 0)
+SmartOracle(q) = SmartOracle(q, -Inf*ones(size(q.A,2)), 0.0, zeros(size(q.A,2)), Float64[], Float64[], 0)
 
 
-function (q::SmartOracle)(x::Vector{Float64})
+function (q::SmartOracle)(dest_g::Vector{Float64}, x::Vector{Float64})
 
-    f, g = q.q(x)
+    q.f = q.orac(dest_g, x)
     q.oracleCalls += 1
-    q.x = copy(x)
-    q.f = f
-    q.g = copy(g)
+
+    copyto!(q.x, x)
+    copyto!(q.g, dest_g)
+
     push!(q.times, time())
     push!(q.vals, q.f)
 
-    return (q.f, q.g)
+    return q.f
 
 end
 
+# Oracle that calculates f(x) and ∇f(x), and returns f(x). ∇f(x) is saved off for any future oracle calls for this same point x
 function fOracle(q::SmartOracle, x::Vector{Float64})
     #If evaluation point x is the same as previous evaluation point, reuse previous data
     if x == q.x 
@@ -159,11 +211,12 @@ function fOracle(q::SmartOracle, x::Vector{Float64})
 
     # Else, evaluate new f and g, and save off in case of future repeats
     else
-        (f, g) = q.q(x)     
+        f = q.orac(q.g, x)
         q.oracleCalls += 1
-        q.x = copy(x)
+        copyto!(q.x, x)
         q.f = f
-        q.g = copy(g)
+        # g is already stored
+
         push!(q.times, time())
         push!(q.vals, q.f)
     end
@@ -172,22 +225,24 @@ function fOracle(q::SmartOracle, x::Vector{Float64})
 
 end
 
-function gOracle(q::SmartOracle, x::Vector{Float64})
+# Oracle that calculates f(x) and ∇f(x), and returns ∇f(x) (in place). f(x) is saved off for any future oracle calls for this same point x
+function gOracle!(dest_g::Vector{Float64}, q::SmartOracle, x::Vector{Float64})
     #If evaluation point x is the same as previous data, reuse previous data
     if x == q.x
-        g = q.g
+        copyto!(dest_g, q.g)
 
     # Else, evaluate new f and g, and save off in case of future repeats
     else
-        (f, g) = q.q(x)
+        f = q.orac(dest_g, x)
         q.oracleCalls += 1
-        q.x = copy(x)
+        copyto!(q.x, x)
         q.f = f
-        q.g = copy(g)
+        copyto!(q.g, dest_g)
+        
         push!(q.times, time())
         push!(q.vals, q.f)
     end
 
-    return q.g
+    return nothing
 
 end

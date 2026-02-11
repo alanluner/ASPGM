@@ -1,49 +1,75 @@
 include("fom_interface.jl")
 
+# This code implements the Optimized Backtracking Linesearch (OBL-F) method by Chanwoo Park and Ernest Ryu
+# See their paper at https://arxiv.org/abs/2110.11035
+
 mutable struct OBL <: FOM
-    value
-    gradient
-    x
-    z
-    L
-    k
-    Delta
-    oracleCtr
+    x::Vector{Float64}
+    g::Vector{Float64}
+    f::Float64
+    z::Vector{Float64}
+    xTest::Vector{Float64}
+    fTest::Float64
+    gTest::Vector{Float64}
+    zTest::Vector{Float64}
+    L::Float64
+    k::Int64
+    Delta::Float64
+    oracleCtr::Int64
+    tmp::Vector{Float64}
 end
 
-OBL() = OBL(missing, missing, missing, missing, missing, missing, missing, missing)
+OBL() = OBL(Float64[], Float64[], 0.0, Float64[], Float64[], 0.0, Float64[], Float64[], 0.0, 0, 0.0, 0, Float64[])
 
 function runMethod(method::OBL, oracle, x0::Vector{Float64}; oracleCalls = 500, runTime = 0, saveDetails = false)
 
     t0 = time()
-    i = 0
     exit = false
-    metaData = []
+    metaData = Vector{Float64}[]
 
-    y = x0 + 1e-4*randn(length(x0))
-    f0,g0 = oracle(x0)
-    fy,gy = oracle(y)
-    LEst = dot(g0 - gy, g0 - gy) / (2 * (fy - f0 - dot(g0, y-x0)))
+    # ------------ Initialize -----------
+    method.x = copy(x0)
+    method.g = zeros(size(method.x))
+    method.z = copy(method.x)
+    method.xTest = zeros(size(method.x))
+    method.gTest = zeros(size(method.x))
+    method.zTest = zeros(size(method.x))
+    method.tmp = zeros(size(method.x))
+
+    method.f = oracle(method.g, method.x)
+
+    gNorm = norm(method.g)
+    c = 1e-4
+    @. method.tmp = method.x - c/gNorm*method.g
+    method.fTest = oracle(method.gTest, method.tmp)
+
+    @. method.tmp = method.g - method.gTest
+    gDiffNormSq = dot(method.tmp, method.tmp)
+    LEst = gDiffNormSq / (2 * (method.fTest - method.f + 1e-4*gNorm))
     LEst = abs(LEst) # Sanity check
-    
-    initialize(method, x0, f0, g0, LEst)
+
+    method.L = LEst
+    method.k = 0
+    method.Delta = 0.0
+    method.oracleCtr = 2    # Start at 2 since we already called oracle twice
+
+    # ------------ End Initialize -----------
 
     if saveDetails
-        metaData = [f0  norm(g0)  guarantee(method)  method.Delta  getTau(method)  method.L]
-        metaData = vcat(metaData, [fy  norm(gy)  guarantee(method)  method.Delta  getTau(method)  method.L])
+        push!(metaData, [method.f, norm(method.g), guarantee(method), method.Delta, getTau(method), method.L])
+        push!(metaData, [method.fTest, norm(method.gTest), guarantee(method), method.Delta, getTau(method), method.L])
     end
-    
-    x = x0
 
     while !exit
         ctr1 = method.oracleCtr
-        x = update(method, oracle)
+        update(method, oracle)
         ctr2 = method.oracleCtr
 
         # If we did multiple oracle calls during this iteration (backtracking), then save off data multiple times - once for each oracle call
         if saveDetails
             for i=1:ctr2-ctr1
-                metaData = vcat(metaData, [method.value  norm(method.gradient)  guarantee(method)  method.Delta  getTau(method)  method.L])
+                currentData = [method.f, norm(method.g), guarantee(method), method.Delta, getTau(method), method.L]
+                push!(metaData, currentData)
             end
         end
 
@@ -54,50 +80,59 @@ function runMethod(method::OBL, oracle, x0::Vector{Float64}; oracleCalls = 500, 
         end
     end
 
-    return method.x, method.value, metaData
+    # Convert from list of vectors to matrix
+    if !isempty(metaData)
+        metaData = reduce(vcat, transpose.(metaData))
+    end
+
+    return method.x, method.f, metaData
 
 end
 
-function initialize(method::OBL, x0::Vector{Float64}, val::Float64, grad::Vector{Float64}, L::Float64)
-    method.value = val
-    method.gradient = grad
-    method.x = x0
-    method.z = x0
-    method.L = L
-    method.k = 0
-    method.Delta = 0
-    method.oracleCtr = 2 # Start at 2 since we already called oracle twice
-end
-
-function update(method::OBL, oracle::Oracle)
+function update(method::OBL, oracle)
 
     LPrev = copy(method.L)
 
     # Sanity check
-    if method.L >= 1e10
-        @warn "L estimate has gotten too large. Returning current iterate" maxlog=1
+    if method.L >= 1e20
+        str = "L estimate has gotten too large. Returning current iterate. "*string(method.k)
+        @warn str maxlog=1
         method.oracleCtr += 1
-        return method.x
+        method.f = oracle(method.g, method.x)
+        return
     end
 
-    while method.L < 1e10
+    while method.L < 1e20
 
-        y = method.x - 1/method.L * method.gradient
-        z = method.z - (method.k + 1)/method.L * method.gradient
-        xTest = (1-2/(method.k + 3))*y + 2/(method.k + 3)*z
+        @. method.zTest = method.z - (method.k + 1)/method.L*method.g
 
-        fTest, gTest = oracle(xTest)
+        @. method.tmp = method.x - 1/method.L * method.g
+
+        @. method.xTest = (1-2/(method.k + 3))*method.tmp + 2/(method.k + 3)*method.zTest
+
+        method.fTest = oracle(method.gTest, method.xTest)
         method.oracleCtr += 1
 
-        if isNewIterateValid(xTest, fTest, gTest, method.x, method.value, method.gradient, method.L)
+        @. method.tmp = method.g - method.gTest
+        gDiffNormSq = dot(method.tmp, method.tmp)
 
-            delta = method.L*(method.k+1)*(method.k+2)/2*(1/LPrev^2 - 1/method.L^2)*1/2*norm(method.gradient)^2
+        @. method.tmp = method.x - method.xTest
+        Q = method.f - method.fTest - dot(method.gTest, method.tmp) - gDiffNormSq/(2*method.L)
+
+        if Q + 1e-12 >= 0
+
+            if method.L == LPrev
+                delta = 0
+            else
+                gNormSq = dot(method.g, method.g)
+                delta = method.L*(method.k+1)*(method.k+2)/2*(1/LPrev^2 - 1/method.L^2)*1/2*gNormSq
+            end
             method.Delta = method.L/LPrev * method.Delta  +  delta
 
-            method.z = z
-            method.x = xTest
-            method.value = fTest
-            method.gradient = gTest
+            copyto!(method.z, method.zTest)
+            copyto!(method.x, method.xTest)
+            method.f = method.fTest
+            copyto!(method.g, method.gTest)
             
             break
 
@@ -109,7 +144,7 @@ function update(method::OBL, oracle::Oracle)
 
     method.k += 1
 
-    return method.x
+    return
 end
 
 
@@ -123,12 +158,4 @@ end
 
 function methodTitle(method::OBL)
     return "OBL"
-end
-
-function isNewIterateValid(x_N::Vector{Float64}, f_N::Float64, g_N::Vector{Float64},  x_NMinus1::Vector{Float64}, f_NMinus1::Float64, g_NMinus1::Vector{Float64}, L::Float64)
-
-    Q = f_NMinus1 - f_N - dot(g_N, x_NMinus1 - x_N) - norm(g_N - g_NMinus1)^2/(2L)
-
-    return (Q>=0)
-
 end

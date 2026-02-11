@@ -2,6 +2,7 @@ include("example_oracles.jl")
 
 using JLD2, QPSReader, LinearAlgebra, Optim
 
+# Generate list of oracles for synthetic problems
 function generateOracles(rng, problemTypes, dimArray; numCopies = 1)
 
     oracles = []
@@ -29,7 +30,7 @@ function generateOracles(rng, problemTypes, dimArray; numCopies = 1)
 
 end
 
-
+# Get true solutions for list of oracles
 function getSolutions(oracles, x0s; file = [])
     xStarList = []
     fStarList = []
@@ -51,13 +52,24 @@ function getSolutions(oracles, x0s; file = [])
     return fStarList, xStarList
 end
 
+# Get solution for a single oracle
 function getSolution(oracle, start::Vector{Float64}; maxIter::Int64 = 10000, printout = false)
-    res = Optim.optimize((x -> oracle(x)[1]), (x -> oracle(x)[2]), start, Optim.LBFGS(), Optim.Options(g_abstol=1e-12, show_trace=printout, show_every=500, iterations=maxIter); inplace=false)
+    tmp = zeros(size(start))
+    function f(x)
+        return oracle(tmp, x)
+    end
+
+    function g!(dest_g, x)
+        oracle(dest_g, x)
+        return nothing
+    end
+
+    res = Optim.optimize(f, g!, start, Optim.LBFGS(), Optim.Options(g_abstol=1e-12, show_trace=printout, show_every=500, iterations=maxIter))
     success = Optim.converged(res)
     return Optim.minimum(res), Optim.minimizer(res), success
 end
 
-
+# Construct single oracle depending on problem type
 function buildOracle(type, rng, mode, m, d)
 
     if type == :LSReg
@@ -83,6 +95,7 @@ function buildOracle(type, rng, mode, m, d)
     return q, x0
 end
 
+# Least Squares Regression oracle
 function build_LSReg(rng, mode, m, d)
     A = randMat(rng, mode, m, d)
     b = randn(rng, m)
@@ -93,6 +106,7 @@ function build_LSReg(rng, mode, m, d)
     return q, x0
 end
 
+# Logistic Regression oracle
 function build_LogReg(rng, mode, m, d)
     c = 2*round.(rand(rng, m)) .- 1
     A = randMat(rng, mode, m, d)
@@ -103,6 +117,7 @@ function build_LogReg(rng, mode, m, d)
     return q, x0
 end
 
+# LogSumExp oracle
 function build_LogSumExp(rng, mode, m, d)
     A = randMat(rng,mode, m, d)
     b = randn(rng, m)
@@ -116,7 +131,7 @@ function build_LogSumExp(rng, mode, m, d)
     return q, x0
 end
 
-
+# Squared Relu oracle
 function build_SquaredRelu(rng, mode, m, d)
     A = randMat(rng, mode, m, d)
     b = randn(rng, m)
@@ -127,6 +142,7 @@ function build_SquaredRelu(rng, mode, m, d)
     return q, x0
 end
 
+# Cubic Regression oracle
 function build_CubicReg(rng, mode, m, d)
     A = randMat(rng,mode,m,d)
     b = randn(rng, d)
@@ -137,6 +153,7 @@ function build_CubicReg(rng, mode, m, d)
     return q, x0
 end
 
+# Quartic Regression oracle
 function build_QuarticReg(rng, mode, m, d)
     A = randMat(rng, mode, m, d)
     b = randn(rng, m)
@@ -146,8 +163,9 @@ function build_QuarticReg(rng, mode, m, d)
     return q, x0
 end
 
+# Build specific hard problem instance "ProblemA" (See Section 5 of paper)
 function build_HardInstanceA(d)
-    A = 1/2*diagm(-1 => -1/2*ones(d-1),  0 => ones(d),  1 => -1/2*ones(d-1))
+    A = diagm(-1 => -1/2*ones(d-1),  0 => ones(d),  1 => -1/2*ones(d-1))
     b = zeros(d)
     b[1] = -1/2
 
@@ -157,6 +175,7 @@ function build_HardInstanceA(d)
     return q, x0
 end
 
+# Build specific hard problem instance "ProblemB" (See Section 5 of paper)
 function build_HardInstanceB(d)
     lams = (sin.(pi*(1:d)./(2*d))).^2
     A = diagm(lams)
@@ -167,12 +186,13 @@ function build_HardInstanceB(d)
     return q, x0
 end
 
+# Build specific hard problem instance "ProblemC" (See Section 5 of paper)
 function build_HardInstanceC(d)
-    A = 1.0*diagm(1:d)
-    b = ones(d)
+    A = 1.0*diagm((1:d).^2)
+    b = collect(-1:-1:-d)
     x0 = zeros(d)
 
-    q = LSRegOracle(A, b)
+    q = quadratic(A,b,d/2)
 
     return q, x0
 end
@@ -228,7 +248,7 @@ function randMat(rng, mode, m, d)
 
 end
 
-
+# Default set of problem types for large-scale synthetic testing
 function defaultProblemTypes()
     return [
         :LogSumExp, 
@@ -240,38 +260,8 @@ function defaultProblemTypes()
     ]
 end
 
-function problemList_LIBSVM()
-    probs = [:coloncancer,:duke,:gisette,:leukemia,:madelon,
-            :bodyfat,:eunite,:pyrim,:triazines,:YearPrediction]
-    types = [:LogReg,:LogReg,:LogReg,:LogReg,:LogReg,
-             :LSReg,:LSReg,:LSReg, :LSReg, :LSReg]
-    sources = [:LIBSVM, :LIBSVM, :LIBSVM, :LIBSVM, :LIBSVM,
-            :LIBSVM, :LIBSVM, :LIBSVM, :LIBSVM, :LIBSVM]
 
-    return probs, types, sources
-end
-
-
-function problemList_LP()
-    probs = [:brazil3,:chromatic,:ex10,:graph40,:qap15,:rmine15,:savsched1,:scpm1,:setcover,:supportcase10,
-             :brazil3,:chromatic,:ex10,:graph40,:qap15,:rmine15,:savsched1,:scpm1,:setcover,:supportcase10]
-    types = [:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,:LogSumExp,
-             :SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu,:SquaredRelu]
-    sources = [:LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas,
-               :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas, :LPFeas]
-
-    return probs, types, sources
-end
-
-function getProblemSource(prob)
-    if prob in [:brazil3,:chromatic,:ex10,:graph40,:qap15,:rmine15,:savsched1,:scpm1,:setcover,:supportcase10]
-        return :LPFeas
-    elseif prob in [:coloncancer,:duke,:gisette,:leukemia,:madelon,:bodyfat,:eunite,:pyrim,:triazines,:YearPrediction]
-        return :LIBSVM
-    end
-end
-
-
+# Parse file from LIBSVM and generate matrix A and vector b
 function parse_LIBSVM_file(filename::String)
     labels = Float64[]
     row_indices = Int[]
@@ -316,8 +306,7 @@ function parse_LIBSVM_file(filename::String)
 end
 
 
-# Ax <= b
-
+# Parse file from LP and generate matrix A and vector b from the contraints, with the form Ax <= b
 function parse_LP_file(filename::String)
     
     data = readqps(filename)

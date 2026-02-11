@@ -1,15 +1,12 @@
-include("example_oracles.jl")
-include("TestingUtilities.jl")
-
-using LineSearches, Random, Mosek, LaTeXStrings, Plots
+using LineSearches, LaTeXStrings, Plots
 
 # Pre-Process data for large-scale performance plots
 function getSummaryData(functionValData, timeData, fStarData, targetRelAccuracies, maxIter)
     numberSolved = zeros(size(functionValData,1), size(functionValData,2), length(targetRelAccuracies), maxIter)
     times = -ones(size(functionValData,1), size(functionValData,2), length(targetRelAccuracies))
 
-    for i in 1:size(functionValData,1)
-        for j = 1:size(functionValData,2)
+    for i in axes(functionValData,1)
+        for j in axes(functionValData,2)
             fStar = fStarData[j]
             data = functionValData[i,j]
             f0 = data[1]
@@ -56,7 +53,7 @@ function plotTime(times, targetRelAccuracies, methods, problemInstances, metIndi
     p = plot(layout=(1,length(targetRelAccuracies)), size=(1600,500))
     for (plotIdx, acc) in enumerate(targetRelAccuracies)
         accStr = ["Low Accuracy","Medium Accuracy", "High Accuracy"][plotIdx]
-        for i in drawOrder
+        for i in metIndices
             met = methods[i]
             ts = times[i,problemInstances,plotIdx]
             ts = ts[ts .>= 0]
@@ -76,21 +73,22 @@ end
 
 function mapProbIdxToEqn(k)
     if k==1
-        return "(4.3)"
+        return "(40)"
     elseif k==2
-        return "(4.1)"
+        return "(38)"
     elseif k==3
-        return "(4.2)"
+        return "(39)"
     elseif k==4
-        return "(4.4)"
+        return "(41)"
     elseif k==5
-        return "(4.5)"
+        return "(42)"
     elseif k==6
-        return "(4.6)"
+        return "(43)"
     end
 end
 
-function plotOracle_ByProblemClass(problemTypes, numberSolved, targetRelAccuracies, methods, drawOrder, legendOrder; basepath=[])
+# Performance plots with respect to oracle calls, grouped by problem class
+function plotOracle_ByProblemClass(problemTypes, numberSolved, targetRelAccuracies, methods, drawOrder, legendOrder; basepath=[], colors=[])
 
     groups = [2 3; 1 4; 5 6]
     numDims = 4
@@ -122,22 +120,25 @@ function plotOracle_ByProblemClass(problemTypes, numberSolved, targetRelAccuraci
         plot!(p2, title="")
 
         labels = []
-        colors = []
+        legendColors = []
         styles = []
         for j in legendOrder
             append!(labels, [methodTitle(methods[j])])
             color, style = mapMethodToProperties(methods[j])
-            append!(colors, [color])
+            if !isempty(colors)
+                color=colors[i]
+            end
+            append!(legendColors, [color])
             append!(styles, [style])
         end
 
         labels = permutedims(labels)
-        colors = permutedims(colors)
+        legendColors = permutedims(legendColors)
         styles = permutedims(styles)
 
-        n = length(methods)
+        n = length(labels)
 
-        legend_plot = plot((-n:-1)', (-n:-1)', ylims=(0,1), legendfontsize=9, legendcolumns=Int(ceil(n/2)), legend=:bottom, frame=:none, color=colors, labels=labels, ls=styles, linewidth=4)
+        legend_plot = plot((-n:-1)', (-n:-1)', ylims=(0,1), legendfontsize=9, legendcolumns=Int(ceil(n/2)), legend=:bottom, frame=:none, color=legendColors, labels=labels, ls=styles, linewidth=4)
 
 
         pp = plot(p1, p2, legend_plot, layout=layout, bottom_margin = 5Plots.mm, left_margin = 10Plots.mm, size=(1600,900))
@@ -150,7 +151,7 @@ function plotOracle_ByProblemClass(problemTypes, numberSolved, targetRelAccuraci
     end
 end
 
-
+# Performance plot with respect to oracle calls and real time
 function plotOracleAndTime(numberSolved, times, targetRelAccuracies, methods; drawOrder = [], legendOrder = [], file=[], colors = [], endTime = 60)
 
     if isempty(drawOrder)
@@ -229,36 +230,29 @@ function plotOracleAndTime(numberSolved, times, targetRelAccuracies, methods; dr
 end
 
 function mapMethodToProperties(method)
-    metType = typeof(method)
-    if metType == OBL
+    metType = Symbol(typeof(method))
+    if metType == :OBL
         color = :gray59
         style = :dash
-
-    elseif metType == UFGM
+    elseif metType == :UFGM
         color = :gray32
         style = :solid
-
-    elseif metType == AdGD
+    elseif metType == :AdGD
         color = :lightskyblue
         style = :dash
-
-    elseif metType == ACFGM
+    elseif metType == :ACFGM
         color = :skyblue3
         style = :solid
-
-    elseif metType == AdaNAG
+    elseif metType == :AdaNAG
         color = :dodgerblue3
         style = :solid
-
-    elseif metType == NAGF
-        color = :mediumpurple2
+    elseif metType == :NAGF
+        color = :mediumpurple1
         style = :dash
-
-    elseif metType == OSGMR
-        color = :purple3
+    elseif metType == :OSGMB
+        color = :mediumpurple3
         style = :solid
-
-    elseif metType == LBFGS
+    elseif metType == :LBFGS
         if typeof(method.linesearchMode).name.name == :HagerZhang
             color = :coral
             style = :dash
@@ -266,20 +260,20 @@ function mapMethodToProperties(method)
             color = :orangered3
             style = :solid
         end
-
-    elseif metType == ASPGM
+    elseif metType == :ASPGM11
+        color = :aquamarine3
+        style = :solid
+    elseif metType == :ASPGM
         if method.options.mode == :A
-            if method.options.memorySize_SP == 1
-                color = :aquamarine3
-            else
-                color = :green
-            end
+            color = :green
             style = :solid
         else
-            color = :palegreen3
+            color = :green3
             style = :dash
         end
-
+    else
+        color = :brown
+        style = :solid
     end
 
     return color, style
@@ -287,11 +281,13 @@ end
 
 
 # Plot comparison of ASPGM with different memory values
-function plotMemComparison(solved_Synth, solved_Reg, solved_LP, methods, drawOrder, legendOrder; file=[])
+function plotMemComparison(solved_Synth, solved_Reg, solved_LP, methods, drawOrder, legendOrder; file=[], colors=[])
     
     layout = @layout [blah; a{1.0w,0.05h}]
     
-    colors = [:aquamarine3, :limegreen, :seagreen, :green, :darkgreen, :teal]
+    if isempty(colors)
+        colors = [:teal, :darkgreen, :forestgreen, :limegreen, :aquamarine3]
+    end
 
     p = plot(layout=(1,3), size=(1600,500))
     for i in drawOrder
@@ -299,8 +295,8 @@ function plotMemComparison(solved_Synth, solved_Reg, solved_LP, methods, drawOrd
         color=colors[i]
         style = :solid
         plot!(p, vec(sum(solved_Synth[i,:,1,:], dims=1))/size(solved_Synth,2), subplot=1, seriestype=:steppost, label=methodTitle(met), legend=:none, title="Synthetic Problems", linewidth=3.5, linestyle = style, color = color, xlabel="Oracle Calls")
-        plot!(p, vec(sum(solved_Reg[i,:,1,:], dims=1))/size(solved_Reg,2), subplot=2, seriestype=:steppost, label=methodTitle(met), legend=:none, title="Regression Problems", linewidth=3.5, linestyle = style, color = color)
-        plot!(p, vec(sum(solved_LP[i,:,1,:], dims=1))/size(solved_LP,2), subplot=3, seriestype=:steppost, label=methodTitle(met), legend=:none, title="LP Feasibility Problems", linewidth=3.5, linestyle = style, color = color)
+        plot!(p, vec(sum(solved_Reg[i,:,1,:], dims=1))/size(solved_Reg,2), subplot=2, seriestype=:steppost, label=methodTitle(met), legend=:none, title="Regression Problems", linewidth=3.5, linestyle = style, color = color, xlabel="Oracle Calls")
+        plot!(p, vec(sum(solved_LP[i,:,1,:], dims=1))/size(solved_LP,2), subplot=3, seriestype=:steppost, label=methodTitle(met), legend=:none, title="LP Feasibility Problems", linewidth=3.5, linestyle = style, color = color, xlabel="Oracle Calls")
     end
     plot!(p, ylims=(0.0, 1.01))
     plot!(p, ylabel="Fraction of Solved Instances", subplot=1)
@@ -315,10 +311,11 @@ function plotMemComparison(solved_Synth, solved_Reg, solved_LP, methods, drawOrd
     end
 
     labels = permutedims(labels)
-    colors = permutedims(colors)
+    legendColors = permutedims(colors[legendOrder])
     styles = permutedims(styles)
 
-    legend_plot = plot((-6:-1)', (-6:-1)', ylims=(0,1), legendfontsize=9, legendcolumns=6, legend=:top, frame=:none, color=colors, labels=labels, ls=styles, linewidth=4)
+    n = length(labels)
+    legend_plot = plot((-n:-1)', (-n:-1)', ylims=(0,1), legendfontsize=9, legendcolumns=n, legend=:top, frame=:none, color=legendColors, labels=labels, ls=styles, linewidth=4)
 
 
     pp = plot(p, legend_plot, layout=layout)
@@ -353,21 +350,24 @@ function plotHardInstances(dataList, fStarList, methods, drawOrder, legendOrder;
     plot!(left_margin = 10Plots.mm)
 
     labels = []
-    colors = []
+    legendColors = []
     styles = []
     for i in legendOrder
         append!(labels, [methodTitle(methods[i])])
         color, style = mapMethodToProperties(methods[i])
-        append!(colors, [color])
+        if !isempty(colors)
+            color=colors[i]
+        end
+        append!(legendColors, [color])
         append!(styles, [style])
     end
 
     labels = permutedims(labels)
-    colors = permutedims(colors)
+    legendColors = permutedims(legendColors)
     styles = permutedims(styles)
 
-    n = length(legendOrder)
-    legend_plot = plot((-n:-1)', (-n:-1)', ylims=(0,1), legendfontsize=9, legendcolumns=Int(n/2), legend=:top, frame=:none, color=colors, labels=labels, ls=styles, linewidth=4)
+    n = length(labels)
+    legend_plot = plot((-n:-1)', (-n:-1)', ylims=(0,1), legendfontsize=9, legendcolumns=Int(n/2), legend=:top, frame=:none, color=legendColors, labels=labels, ls=styles, linewidth=4)
 
     pp = plot(p, legend_plot, layout=layout)
     plot!(pp, bottom_margin = 10Plots.mm)
@@ -401,13 +401,14 @@ function plotDetails(data, methods, xStar, fStar, x0; drawOrder = [], legendOrde
 
     for i in drawOrder
         met = methods[i]
+        metType = Symbol(typeof(met))
         color, style = mapMethodToProperties(met)
         if !isempty(colors)
             color=colors[i]
         end
-        condition = ((typeof(met) == ASPGM)&&(met.options.mode == :B))||(typeof(met) in [AdaNAG, OBL])
+        condition = ((metType == :ASPGM)&&(met.options.mode == :B))||(metType == :OBL)
         if condition
-            plot!(p, data[i,3], subplot=2, yscale=:log10, legend=:none, linewidth=4, linestyle = style, color = color)
+            plot!(p, data[i,3] .+ 1e-16, subplot=2, yscale=:log10, legend=:none, linewidth=4, linestyle = style, color = color)
         end
     end
     plot!(xlabel="Oracle Calls", subplot=2)
@@ -415,13 +416,14 @@ function plotDetails(data, methods, xStar, fStar, x0; drawOrder = [], legendOrde
 
     for i in drawOrder
         met = methods[i]
+        metType = Symbol(typeof(met))
         color, style = mapMethodToProperties(met)
         if !isempty(colors)
             color=colors[i]
         end
-        if ((typeof(met) == ASPGM)&&(met.options.mode == :B))||(typeof(met) == OBL)
+        if ((metType == :ASPGM)&&(met.options.mode == :B))||(metType == :OBL)
 
-            if typeof(met) == OBL
+            if metType == :OBL
                 plot!(p, vcat(0.0,data[i,4]) .+ 1e-16, subplot=3, legend=:none, linewidth=4, linestyle = style, color = color, yscale=:log10)
             else 
                 plot!(p, data[i,4] .+ 1e-16, subplot=3, legend=:none, linewidth=4, linestyle = style, color = color, yscale=:log10)
@@ -435,21 +437,89 @@ function plotDetails(data, methods, xStar, fStar, x0; drawOrder = [], legendOrde
     plot!(ylims=(1e-16, 1e4), subplot=3)
 
     labels = []
-    colors = []
+    legendColors = []
     styles = []
     for i in legendOrder
         append!(labels, [methodTitle(methods[i])])
         color, style = mapMethodToProperties(methods[i])
-        append!(colors, [color])
+        append!(legendColors, [color])
         append!(styles, [style])
     end
 
     labels = permutedims(labels)
-    colors = permutedims(colors)
+    legendColors = permutedims(legendColors)
     styles = permutedims(styles)
 
-    n = length(legendOrder)
-    legend_plot = plot((-n:-1)', (-n:-1)', ylims=(0,1), legendfontsize=9, legendcolumns=Int(ceil(n/2)), legend=:top, frame=:none, color=colors, labels=labels, ls=styles, linewidth=4)
+    n = length(labels)
+    legend_plot = plot((-n:-1)', (-n:-1)', ylims=(0,1), legendfontsize=9, legendcolumns=Int(ceil(n/2)), legend=:top, frame=:none, color=legendColors, labels=labels, ls=styles, linewidth=4)
+
+    pp = plot(p, legend_plot, layout=layout)
+    plot!(pp, bottom_margin = 10Plots.mm)
+
+end
+
+# Plot oracle and real-time results for a single problem instance
+function plotSingleInstance(functionValData, timeData, methods, fStar; endTime = 30, oracleCalls = 500, drawOrder = [], legendOrder = [], colors=[])
+    layout = @layout [blah; a{1.0w,0.05h}]
+    p = plot(layout=(1,2), size=(1600,500))
+
+    if isempty(drawOrder)
+        drawOrder = 1:length(methods)
+    end
+    if isempty(legendOrder)
+        legendOrder = 1:length(methods)
+    end
+    
+    for i in drawOrder
+        f0 = functionValData[i][1]
+        met = methods[i]
+        color, style = mapMethodToProperties(met)
+        if !isempty(colors)
+            color=colors[i]
+        end
+        plot!(p, (abs.(functionValData[i][1:min(length(functionValData[i]), oracleCalls+1)] .- fStar))/(f0 - fStar), subplot=1, yscale=:log10, legend=:none, linewidth=4, linestyle = style, color = color)
+    end
+    plot!(xlabel="Oracle Calls", ylims=(1e-16, 1e4), subplot=1)
+    plot!(ylabel="Scaled Objective Gap", subplot=1)
+
+    for i in drawOrder
+        f0 = functionValData[i][1]
+        t0 = timeData[i][1]
+        met = methods[i]
+        color, style = mapMethodToProperties(met)
+        if !isempty(colors)
+            color=colors[i]
+        end
+        ts = timeData[i] .- t0
+        plot!(p, ts[ts .<= endTime], (abs.(functionValData[i][ts .<= endTime] .- fStar))/(f0 - fStar), subplot=2, yscale=:log10, legend=:none, linewidth=4, linestyle = style, color = color)
+    end
+    plot!(xlabel="Real Time", ylims=(1e-16, 1e4), subplot=2)
+    plot!(ylabel="Scaled Objective Gap", subplot=2)
+
+
+    plot!(bottom_margin = 10Plots.mm)
+    plot!(left_margin = 10Plots.mm)
+    plot!(ylims=(1e-16, 1e4), subplot=3)
+
+    labels = []
+    legendColors = []
+    styles = []
+    for i in legendOrder
+        append!(labels, [methodTitle(methods[i])])
+        color, style = mapMethodToProperties(methods[i])
+        if !isempty(colors)
+            color=colors[i]
+        end
+        append!(legendColors, [color])
+        append!(styles, [style])
+    end
+
+    labels = permutedims(labels)
+    legendColors = permutedims(legendColors)
+    styles = permutedims(styles)
+
+    n = length(labels)
+    legend_plot = plot((-n:-1)', (-n:-1)', ylims=(0,1), legendfontsize=9, legendcolumns=Int(ceil(n/2)), legend=:top, frame=:none, color=legendColors, labels=labels, ls=styles, linewidth=4)
 
     pp = plot(p, legend_plot, layout=layout)
     plot!(pp, bottom_margin = 10Plots.mm)

@@ -1,5 +1,8 @@
 include("fom_interface.jl")
 
+# This code implements the NAG-Free method by Joao Cavalcanti, Laurent Lessard and Ashia Wilson
+# See their paper at https://arxiv.org/abs/2506.13033
+
 mutable struct NAGF <: FOM
 end
 
@@ -9,47 +12,70 @@ function runMethod(method::NAGF, oracle, x0::Vector{Float64}; oracleCalls = 500,
     t0 = time()
     i = 0
     exit = false
-    metaData = []
+    metaData = Vector{Float64}[]
 
-    y = x0 + 1e-6*rand(length(x0))
+    x = copy(x0)
+
+    g = zeros(size(x))
+    y = zeros(size(x))
+    y_new = zeros(size(x))
+    x_new = zeros(size(x))
+    g_new = zeros(size(x))
+    tmp = zeros(size(x))
+
+    f = oracle(g, x)
+
+    tmp .= 1e-6*rand(length(x))
+    xDiffNorm = norm(tmp)
+    @. y = x + tmp
     
-    f0, g0 = oracle(x0)
-    fy, gy = oracle(y)
+    f_new = oracle(g_new, y)
 
     if saveDetails
-        metaData = [f0  norm(g0)]
-        metaData = vcat(metaData, [fy  norm(gy)])
+        push!(metaData, [f, norm(g)])
+        push!(metaData, [f_new, norm(g_new)])
     end
 
-    L0 = norm(g0 - gy)/norm(x0 - y)
+    @. tmp = g - g_new
+    gDiffNorm = norm(tmp)
+
+    L0 = gDiffNorm / xDiffNorm
     m0 = L0
 
     L = L0
     m = m0
 
-    x = copy(x0)
-    g = copy(g0)
-    f = f0
-
-    y_new = copy(y)
-    x_new = copy(x)
+    copyto!(y_new, y)
+    copyto!(x_new, x)
     f_new = f
-    g_new = copy(g)
+    copyto!(g_new, g)
 
     while !exit
-        y_new = x - g/L
-        x_new = y_new + (sqrt(L)-sqrt(m))/(sqrt(L) + sqrt(m))*(y_new - y)
-        f_new, g_new = oracle(x_new)
+        @. y_new = x - g/L
+
+        @. tmp = y_new - y
+        c = (sqrt(L)-sqrt(m))/(sqrt(L) + sqrt(m))
+        @. x_new = y_new + c*tmp
+
+        f_new = oracle(g_new, x_new)
+
         if saveDetails
-            metaData = vcat(metaData, [f_new  norm(g_new)])
+            push!(metaData, [f_new, norm(g_new)])
         end
-        c = norm(g_new - g)/norm(x_new - x)
+
+        @. tmp = g_new - g
+        gDiffNorm = norm(tmp)
+
+        @. tmp = x_new - x
+        xDiffNorm = norm(tmp)
+
+        c = gDiffNorm/xDiffNorm
         L = max(L,c)
         m = min(m,c)
 
-        x = x_new
-        y = y_new
-        g = g_new
+        copyto!(x, x_new)
+        copyto!(y, y_new)
+        copyto!(g, g_new)
         
         i = i+1
         t = time() - t0
@@ -57,6 +83,11 @@ function runMethod(method::NAGF, oracle, x0::Vector{Float64}; oracleCalls = 500,
         if (i > oracleCalls)&&(t >= runTime)
             exit = true
         end
+    end
+
+    # Convert from list of vectors to matrix
+    if !isempty(metaData)
+        metaData = reduce(vcat, transpose.(metaData))
     end
     
     return x_new, f_new, metaData

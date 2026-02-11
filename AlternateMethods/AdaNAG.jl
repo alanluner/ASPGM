@@ -1,5 +1,8 @@
 include("fom_interface.jl")
 
+# This code implements the AdaNAG method by Jaewook Suh and Shiqian Ma.
+# See their paper at https://arxiv.org/pdf/2505.11670
+
 mutable struct AdaNAG <: FOM
 end
 
@@ -16,52 +19,68 @@ Bk(k) = ( k==0 ? B0 : Alpha(k)^2*Tau(k)^2*((Tau(k)-1)^2/(Alpha(k-1)*Tau(k-1)^2) 
 function runMethod(method::AdaNAG, oracle, x0::Vector{Float64}; oracleCalls = 500, runTime = 0, saveDetails = false)
 
     t0 = time()
-    metaData = []
+    metaData = Vector{Float64}[]
     exit = false
 
-    x = x0
+    x = copy(x0)
+    g = zeros(size(x))
+    xOld = copy(x)
+    gOld = zeros(size(x))
+    y = zeros(size(x0))
+    z = copy(x)
+    tmp = zeros(size(x0))
+
     i = 0
 
-    f, g = oracle(x)
+    f = oracle(g, x)
+    
     fOld = f
-    gOld = copy(g)
-    xOld = copy(x)
-    z = copy(x)
 
 
-    y = x0 + 1e-4*randn(length(x0))
-    fy,gy = oracle(y)
-    L = dot(g - gy, g - gy) / (2 * (fy - f - dot(g, y-x0)))
+    gNorm = norm(g)
+    c = 1e-4
+    @. y = x0 - c/gNorm*g
+    fOld = oracle(gOld, y)
+
+    @. tmp = g - gOld
+    L = dot(tmp, tmp) / (2 * (fOld - f + c*gNorm))
     if isnan(L)||(L<=0)
         L = 0.01
     end
-
 
     r = 27/(2*(12+3)*(2*12^2+8*12+17))
     s = Ak(0)*r/(Alpha(0)*Tau(0)*Alpha(1)*L)
 
     if saveDetails
-        metaData = [f  norm(g)  guarantee(i,s)]
-        metaData = vcat(metaData, [fy  norm(gy)  guarantee(i,s)])
+        push!(metaData, [f, norm(g), guarantee(i,s)])
+        push!(metaData, [fOld, norm(gOld), guarantee(i,s)])
     end
 
     while !exit
 
-        y = x - s*g
-        z = z - s*Alpha(i)*Tau(i)*g
+        @. y = x - s*g
+
+        c = Alpha(i)*Tau(i)*s
+        @. z = z - c*g
 
         fOld = f
-        gOld = copy(g)
-        xOld = copy(x)
+        copyto!(gOld, g)
+        copyto!(xOld, x)
 
-        x = (1-1/Tau(i+1))*y + 1/Tau(i+1)*z
-        f,g = oracle(x)
+        c1 = (1-1/Tau(i+1))
+        c2 = 1/Tau(i+1)
+        @. x = c1*y + c2*z
+        f = oracle(g, x)
+
         if saveDetails
-            metaData = vcat(metaData, [f  norm(g)  guarantee(i,s)])
+            push!(metaData, [f, norm(g), guarantee(i,s)])
         end
 
+        @. tmp = g - gOld
+        gDiffNormSq = norm(tmp)^2
 
-        L = -(1/2*norm(g - gOld)^2)/(f - fOld + g'*(xOld - x))
+        @. tmp = x - xOld
+        L = -(1/2*gDiffNormSq)/(f - fOld - dot(g, tmp))
 
         if isnan(L)||L<=0
             s = (Ak(i-1)+Alpha(i)*Tau(i))/(Ak(i))*s
@@ -75,6 +94,11 @@ function runMethod(method::AdaNAG, oracle, x0::Vector{Float64}; oracleCalls = 50
         if (i > oracleCalls)&&(t >= runTime)
             exit = true
         end
+    end
+
+    # Convert from list of vectors to matrix
+    if !isempty(metaData)
+        metaData = reduce(vcat, transpose.(metaData))
     end
 
     return x, f, metaData

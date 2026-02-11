@@ -13,7 +13,7 @@ The main algorithm is implemented in ASPGM.jl:
   - To specify memory sizes k and t, set *method = ASPGM(k,t)*
   - To use BSPGM algorithm (no restarting or preconditioning) with memory size k, set *method = BSPGM(k)*
 
-- Next, to run the algorithm with default settings, simply call *runMethod(method, oracle, x0)*, where oracle is a first-order oracle of the form (f(x), grad f(x)) = oracle(x).
+- Next, to run the algorithm with default settings, simply call *runMethod(method, oracle, x0)*, where oracle is a first-order oracle of the form f(x) = oracle(g,x), where g is updated in-place.
 
 
 ## Experiments
@@ -42,11 +42,16 @@ We list below the executable scripts for reproducing results in our paper:
 - run_LargeScale_Real - run algorithms over all real-data problems instances from LIBSVM or LPFeas datasets, compare performance in terms of real-time and oracle calls. See Figures 2 and 4.
 
 ## Package Requirements
+- ASPGM-1-1
+  - Parameters
+
 - ASPGM
   - Mosek
   - MosekTools
   - JuMP
   - MathOptInterface
+  - LinearAlgebra
+  - Parameters
 
 - Experiments
   - Random

@@ -1,59 +1,64 @@
 include("example_oracles.jl")
 include("TestingUtilities.jl")
 include("../ASPGM.jl")
+include("../ASPGM11.jl")
 include("../AlternateMethods/ACFGM.jl")
 include("../AlternateMethods/AdaNAG.jl")
 include("../AlternateMethods/AdGD.jl")
 include("../AlternateMethods/LBFGS.jl")
 include("../AlternateMethods/NAGF.jl")
 include("../AlternateMethods/OBL.jl")
-include("../AlternateMethods/OSGMR.jl")
+include("../AlternateMethods/OSGMB.jl")
 include("../AlternateMethods/UFGM.jl")
 include("plot_Performance.jl")
 
 
-using Random
+using Logging, LineSearches, Random, LinearAlgebra
+
+BLAS.set_num_threads(1)
+
 
 
 # ---------- Settings ----------
 
 # Problems instances and their classes
-probs, types, sources = problemList_LIBSVM()         # Ex. problemList_LIBSVM(), problemList_LP()
+dir = "Experiments/LIBSVM/LSReg"
+problemType = :LSReg        # :LogReg, :LSReg, :LogSumExp, :SquaredRelu
+fileType = :LIBSVM          # :LIBSVM, :LPFeas
+
 
 # Determine computation budget for each problem instance in terms of oracle calls or run time (seconds). If both are nonzero, then method will run until BOTH conditions are satisfied
 oracleCalls = 500
-runTime = 0
+runTime = 60     
 
 # Determine whether or not to calculate x_* and f_* for each problem instance
-findTrueSolutions = true                  # If true, calculate x_* and f_*
+findTrueSolutions = true          
 
 # Save results to file
-ResultsSaveFile = []
+ResultsSaveFile = "Results_Real.jld2"
 
 # List of first-order methods to test
-methods = [ASPGM(5,5), ASPGM(1,1), BSPGM(7), LBFGS(10,:BackTracking), LBFGS(10,:HagerZhang), UFGM(), OBL(), AdaNAG(), ACFGM(), AdGD(), NAGF(), OSGMR(0.1)]
+methods = [ASPGM(5,5), ASPGM11(), BSPGM(7), LBFGS(10,:BackTracking), LBFGS(10,:HagerZhang), UFGM(), OBL(), AdaNAG(), ACFGM(), AdGD(), NAGF(), OSGMB()]
 
 # ---------- End Settings ----------
 
 
-methodsInit = copy(methods) # Create copy for saving to results file. This is necessary because .jld2 cannot handle the ASPGM object once Mosek is initialized.
+methodList = methodTitle.(methods) # Create copy for saving to results file. This is necessary because .jld2 cannot handle the ASPGM object once Mosek is initialized.
 
 # Parse files and build oracles
 print("\nParsing Files...")
 x0List = []
 qList = []
-for i in eachindex(probs)
+i = 0
+for file in readdir(dir)
+    global i += 1
     print(i)
-    prob = probs[i]
-    problemType = types[i]
-    source = sources[i]
+    filepath = joinpath(dir, file)
 
-    if source == :LIBSVM
-        file = "Experiments/LIBSVM/"*string(prob)*".txt"
-        A, b = parse_LIBSVM_file(file)
-    elseif source == :LPFeas
-        file = "Experiments/LPFeas/"*string(prob)*".txt"
-        A, b = parse_LP_file(file)
+    if fileType == :LIBSVM
+        A, b = parse_LIBSVM_file(filepath)
+    elseif fileType == :LP
+        A, b = parse_LP_file(filepath)
     end
 
     (m,n) = size(A)
@@ -78,10 +83,24 @@ for i in eachindex(probs)
     push!(x0List, x0)
 end
 
+# --- Find true solutions ---
 if findTrueSolutions         
     print("\nFinding True Solutions...")
     fStarData, xStarData = getSolutions(qList, x0List)
 end
+
+# --- Warm-up problem to compile each method ---
+print("\nWarming up methods...")
+A_tmp = rand(10, 5)
+b_tmp = rand(10)
+q_tmp = SmartOracle(LSRegOracle(A_tmp, b_tmp))
+x0_tmp = zeros(5)
+
+for met in methods
+    runMethod(met, q_tmp, x0_tmp; oracleCalls = 5, runTime = 0)
+end
+print("\nWarm-up complete.\n")
+# --- End warm-up ---
 
 totalProblems = length(qList)
 
@@ -100,8 +119,12 @@ for (i, met) in enumerate(methods)
 
         x0 = x0List[j]
 
+        GC.gc() # garbage collection to reset
+
+        # Run method
         vals, _ = runMethod(met, q2, x0; oracleCalls = oracleCalls, runTime = runTime)
 
+        # Save function value data and time data
         functionValData[i,j] = q2.vals
         timeData[i,j] = q2.times .- q2.times[1]
 
@@ -109,20 +132,23 @@ for (i, met) in enumerate(methods)
 
 end
 
+# --- Save off results --- #
 if !isempty(ResultsSaveFile)
     if findTrueSolutions
-        jldsave(ResultsSaveFile; functionValData, timeData, xStarData, fStarData, methodsInit, dimArray, oracleCalls, runTime, probs, types)
+        jldsave(ResultsSaveFile; functionValData, timeData, xStarData, fStarData, methodList, oracleCalls, runTime, probs, types)
     else
-        jldsave(ResultsSaveFile; functionValData, timeData, methodsInit, dimArray, oracleCalls, runTime, probs, types)
+        jldsave(ResultsSaveFile; functionValData, timeData, methodList, oracleCalls, runTime, probs, types)
     end
 end
 
 totalProblems = size(functionValData,2)
 targetRelAccuracies = [1e-4, 1e-7, 1e-10]
 
+# Process data for plotting
 numberSolved, times = getSummaryData(functionValData, timeData, fStarData, targetRelAccuracies, oracleCalls)
 
-p = plotOracleAndTime(numberSolved, times, targetRelAccuracies, methods; file=[], colors=[])
+# Plot results
+p = plotOracleAndTime(numberSolved, times, targetRelAccuracies, methods; file=[], endTime = 60)
 
 
 

@@ -1,6 +1,7 @@
 include("fom_interface.jl")
 
-# This implementation of UFGM is adapted from the UFGM implementation in https://github.com/tli432/AC-FGM-Implementation
+# This code implements the Universal Fast Gradient Method (UFGM) method by Alexander Gasnikov and Yurii Nesterov
+# See their paper at https://arxiv.org/abs/1604.05275
 
 mutable struct UFGM <: FOM
 end
@@ -10,71 +11,83 @@ function runMethod(method::UFGM, oracle, x0::Vector{Float64}; oracleCalls = 500,
     t0 = time()
     i = 0
     exit = false
-    metaData = []
+    metaData = Vector{Float64}[]
 
     x = copy(x0)
-    f, g = oracle(x)
+    g = zeros(size(x))
+    y = zeros(size(x))
+    x_new = zeros(size(x))
+    g_new = zeros(size(x))
+    y_new = zeros(size(x))
+    v = zeros(size(x))
+    dual_phi = zeros(size(x))
+    tmp = zeros(size(x))
 
-    A = 0
-    dual_phi = zeros(length(x0))
-    const_psi = 0
+    f = oracle(g, x)
 
-    y = x0 + 1e-4*randn(length(x0))
-    f_y,g_y = oracle(y)
-    L0 = dot(g - g_y, g - g_y) / (2 * (f_y - f - dot(g, y-x0)))
-    if isnan(L0)||(L0==0)
-        L0 = 0.01
+    gNorm = norm(g)
+    c = 1e-4
+    @. x_new = x - c/gNorm*g
+    f_new = oracle(g_new, x_new)
+
+    @. tmp = g - g_new
+    L = dot(tmp, tmp) / (2 * (f_new - f + c*gNorm))
+    if isnan(L)||(L<=0)
+        L = 0.01
     end
 
     if saveDetails
-        metaData = [f  norm(g)]
-        metaData = vcat(metaData, [f_y  norm(g_y)])
+        push!(metaData, [f, norm(g)])
+        push!(metaData, [f_new, norm(g_new)])
     end
 
-    L = L0
+    A_new = 0.0
+    a_new = 0.0
+    L_new = 0.0
+    a = 0.0
+    A = 0.0
+    f_y = 0.0
+
+    copyto!(y, x)
 
     while !exit
-        v = x0 - dual_phi
-        x_new = x0
-        y_new = x0
-        A_new = A
-        a_new = 0
-        L_new = L
-        g_new = g
-        f_y = f
+        @. v = x0 - dual_phi
         for j = 0:50
             L_new = 2^j * L
             a_new = (1+sqrt(abs(1+4*L_new*A)))/(2*L_new)
             A_new = A + a_new
+
             tau = a_new / A_new
-            x_new = tau * v + (1-tau) * y
-            f_x, g_new = oracle(x_new)
-            x_hat_new = v - a_new * g_new
-            y_new = tau * x_hat_new + (1-tau) * y
-            f_y, g_y = oracle(y_new)
-            tmp1 = f_y - f_x - dot(g_new, y_new - x_new)
-            tmp2 = L_new/2 * (norm(y_new-x_new))^2
+            @. x_new = tau * v + (1-tau) * y
+            f_x = oracle(g_new, x_new)
+
+            @. tmp = v - a_new * g_new
+            @. y_new = tau * tmp + (1-tau) * y
+
+            f_y = oracle(tmp, y_new)
+
+            if saveDetails
+                push!(metaData, [f_x, norm(g_new)])
+                push!(metaData, [f_y, norm(tmp)])
+            end
+
+            @. tmp = y_new - x_new
+            val1 = f_y - f_x - dot(g_new, tmp)
+            val2 = L_new/2 * dot(tmp, tmp)
 
             i = i+2
 
-            if saveDetails
-                metaData = vcat(metaData, [f_x  norm(g_new)])
-                metaData = vcat(metaData, [f_y  norm(g_y)])
-            end
-
-            if tmp1 <= tmp2  + 1e-15 * f_y
+            if val1 <= val2
                 break
             end
         end
 
-        x = x_new
-        y = y_new
+        copyto!(x, x_new)
+        copyto!(y, y_new)
         A = A_new
         L = L_new/2
         a = a_new
-        dual_phi += a * g_new
-        const_psi += a
-        obj = f_y
+        @. dual_phi = dual_phi + a * g_new
 
         t = time() - t0
 
@@ -82,6 +95,11 @@ function runMethod(method::UFGM, oracle, x0::Vector{Float64}; oracleCalls = 500,
             exit = true
         end
 
+    end
+
+    # Convert from list of vectors to matrix
+    if !isempty(metaData)
+        metaData = reduce(vcat, transpose.(metaData))
     end
     
     return y, f_y, metaData

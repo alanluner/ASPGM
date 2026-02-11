@@ -1,5 +1,8 @@
 include("fom_interface.jl")
 
+# This code implements the improved adaptive gradient descent (AdGD) method by Yura Malitsky and Konstantin Mischchenko.
+# See their paper at https://arxiv.org/abs/2308.02261
+
 mutable struct AdGD <: FOM
 end
 
@@ -9,49 +12,68 @@ function runMethod(method::AdGD, oracle, x0::Vector{Float64}; oracleCalls = 500,
     t0 = time()
     i = 0
     exit = false
-    metaData = []
+    metaData = Vector{Float64}[]
 
-    x_prev = x0
-    θ = 1.0 / 3
+    theta = 1.0 / 3
 
-    y = x0 + 1e-4*randn(length(x0))
-    fy,gy = oracle(y)
-    f0,g0 = oracle(x0)
-    L0 = dot(g0 - gy, g0 - gy) / (2 * (fy - f0 - dot(g0, y-x0)))
+    x = copy(x0)
+    g = zeros(size(x0))
+    x_prev = copy(x)
+    g_prev = zeros(size(x0))
+    tmp = zeros(size(x0))
+
+
+    f = oracle(g, x)
+
+    gNorm = norm(g)
+    c = 1e-4
+    @. tmp = x - c/gNorm*g
+    f_prev = oracle(g_prev, tmp)
+
+    @. tmp = g - g_prev
+    L0 = dot(tmp, tmp) / (2 * (f_prev - f + c*gNorm))
     if isnan(L0)||(L0==0)
         L0 = 0.01
     end
 
     if saveDetails
-        metaData = [f0  norm(g0)]
-        metaData = vcat(metaData, [fy  norm(gy)])
+        push!(metaData, [f, norm(g)])
+        push!(metaData, [f_prev, norm(g_prev)])
     end
 
-    α_prev = 1/L0
-    g_prev = g0
-    x_prev = x0
+    a_prev = 1/L0
+    copyto!(g_prev, g)
+    copyto!(x_prev, x)
 
-    x = x0 - 1/L0*g0
-    f,g = oracle(x)
+    @. x = x_prev - a_prev*g_prev
+    f = oracle(g, x)
+
     if saveDetails
-        metaData = vcat(metaData, [f  norm(g)])
+        push!(metaData, [f, norm(g)])
     end
 
     while !exit
-        L = norm(g - g_prev) / norm(x - x_prev)
-        α = min(sqrt(2 / 3 + θ) * α_prev, α_prev / sqrt(max(2 * α_prev^2 * L^2 - 1, 0)))
 
-        θ = α / α_prev
-        
-        x_prev = x
-        g_prev = g
-        α_prev = α
+        @. tmp = g - g_prev
+        gDiffNorm = norm(tmp)
 
-        x = x - α * g
+        @. tmp = x - x_prev
+        xDiffNorm = norm(tmp)
+
+        L = gDiffNorm / xDiffNorm
+        a = min(sqrt(2 / 3 + theta) * a_prev, a_prev / sqrt(max(2 * a_prev^2 * L^2 - 1, 0)))
+
+        theta = a / a_prev
         
-        f, g = oracle(x)
+        copyto!(x_prev, x)
+        copyto!(g_prev, g)
+        a_prev = a
+
+        @. x = x - a * g
+        
+        f = oracle(g, x)
         if saveDetails
-            metaData = vcat(metaData, [f  norm(g)])
+            push!(metaData, [f, norm(g)])
         end
 
         i = i+1
@@ -60,6 +82,12 @@ function runMethod(method::AdGD, oracle, x0::Vector{Float64}; oracleCalls = 500,
         if (i > oracleCalls)&&(t >= runTime)
             exit = true
         end
+
+    end
+
+    # Convert from list of vectors to matrix
+    if !isempty(metaData)
+        metaData = reduce(vcat, transpose.(metaData))
     end
 
     return x, f, metaData
