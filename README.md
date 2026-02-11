@@ -15,6 +15,8 @@ The main algorithm is implemented in ASPGM.jl:
 
 - Next, to run the algorithm with default settings, simply call *runMethod(method, oracle, x0)*, where oracle is a first-order oracle of the form f(x) = oracle(g,x), where g is updated in-place.
 
+One can also use ASPGM11.jl to implement ASPGM-1-1 (memory size 1). This is a stand-alone implementation with no dependencies on external solvers.
+
 
 ## Experiments
 
