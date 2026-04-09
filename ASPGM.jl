@@ -324,7 +324,7 @@ function update(method::ASPGM, oracle)
 
     # Sanity check for bad behavior (NaNs, Infs) in gradients
     if any(!isfinite, method.gradient)
-        if isnothing(method.PrecLU)
+        if !isnothing(method.PrecLU)
             # NaNs/Infs can arise from numerical error in preconditioning when close to the solution
             # If that is the case, disable preconditioning going forward and restart
             flags.flag_DisablePrec = true

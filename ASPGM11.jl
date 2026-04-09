@@ -257,15 +257,14 @@ function update(method::ASPGM11, oracle)
 
     # Sanity check for bad behavior (NaNs, Infs) in gradients
     if any(!isfinite, method.gradient)
-        if isnothing(method.M)
+        if !isnothing(method.M)
             # NaNs/Infs can arise from numerical error in preconditioning when close to the solution
             # If that is the case, disable preconditioning going forward and restart
             flags.flag_DisablePrec = true
             
             # If our current iterate x has bad behavior, return to previous iterate
             if any(!isfinite, method.x)
-                idx = getActiveIndices(method)[end]
-                method.x .= method.X[:,idx]
+                method.x .= method.x_prev
             end
 
             restart(method, oracle)
@@ -642,11 +641,11 @@ function dot_B(v::Vector{Float64}, w::Vector{Float64}, method::ASPGM11)
     m11 = method.M[1,1]
     m22 = method.M[2,2]
 
-    if m11 * m22 == 0
-        return dot(v, w)
-    end
-    
     vw = dot(v, w)
+
+    if m11 * m22 == 0
+        return vw
+    end
 
     # Reuse dot products if v == w
     vS = dot(v, method.S)
@@ -697,7 +696,8 @@ function ApplyHessianApprox!(dest::Vector{Float64}, v::Vector{Float64}, method::
     vec = [method.theta*dot(method.S,v), dot(method.Y,v)]
 
     if method.M[1,1]*method.M[2,2] == 0
-        return v
+        dest .= v
+        return
     end
 
     # Set q = M^{-1}*vec
