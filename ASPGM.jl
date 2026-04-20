@@ -1192,7 +1192,7 @@ function guarantee(method::ASPGM)
     if method.newTau > 0
         return method.L/(method.newTau)
     else
-        idx_s = findlast(method.taus .!= 0)
+        idx_s = getLastSuccessIdx(method)
         return method.LPrev[idx_s]/(method.taus[idx_s])
     end
 end
