@@ -676,7 +676,7 @@ function optimize_rho_gamma(method::ASPGM, v_m::Float64)
     c = vcat(method.taus, ones(k))
     d = delta
 
-    fixedIdxRho = findall(method.taus == 0)        # For any i where τ_i = 0 (including inactive indices), we will fix ρ_i = 0
+    fixedIdxRho = findall(method.taus .== 0)        # For any i where τ_i = 0 (including inactive indices), we will fix ρ_i = 0
     fixedIdxGamma = k .+ setdiff(1:k, getActiveIndices(method))  # For any inactive index i, we will fix γ_i = 0
     fixedIdx = vcat(fixedIdxRho, fixedIdxGamma)
 
